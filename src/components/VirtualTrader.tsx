@@ -9,7 +9,7 @@ import {
 const INITIAL_CAPITAL = 100000;
 const STORAGE_KEY = "vt-state";
 
-const POPULAR_STOCKS = [
+const ALL_STOCKS = [
   { symbol: "RELIANCE.NS", name: "Reliance Industries" },
   { symbol: "TCS.NS", name: "Tata Consultancy Services" },
   { symbol: "HDFCBANK.NS", name: "HDFC Bank" },
@@ -20,12 +20,24 @@ const POPULAR_STOCKS = [
   { symbol: "BAJFINANCE.NS", name: "Bajaj Finance" },
   { symbol: "TATAMOTORS.NS", name: "Tata Motors" },
   { symbol: "ADANIENT.NS", name: "Adani Enterprises" },
+  { symbol: "HINDUNILVR.NS", name: "Hindustan Unilever" },
+  { symbol: "ASIANPAINT.NS", name: "Asian Paints" },
+  { symbol: "MARUTI.NS", name: "Maruti Suzuki" },
+  { symbol: "AXISBANK.NS", name: "Axis Bank" },
+  { symbol: "HCLTECH.NS", name: "HCL Technologies" },
+  { symbol: "SUNPHARMA.NS", name: "Sun Pharmaceutical" },
+  { symbol: "ULTRACEMCO.NS", name: "UltraTech Cement" },
+  { symbol: "TITAN.NS", name: "Titan Company" },
+  { symbol: "NESTLEIND.NS", name: "Nestle India" },
+  { symbol: "POWERGRID.NS", name: "Power Grid Corp" },
+  { symbol: "NTPC.NS", name: "NTPC" },
+  { symbol: "ONGC.NS", name: "ONGC" },
+  { symbol: "COALINDIA.NS", name: "Coal India" },
+  { symbol: "BHARTIARTL.NS", name: "Bharti Airtel" },
+  { symbol: "TECHM.NS", name: "Tech Mahindra" },
 ];
 
-const STRATEGY_TAGS = [
-  "Breakout", "Trend Follow", "Reversal", "Support/Resistance",
-  "EMA Crossover", "News-based", "Momentum", "Swing", "Scalp", "Other",
-];
+
 
 const formatCurrency = (val: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(val);
@@ -95,6 +107,8 @@ export default function VirtualTrader() {
   const [expandedTradeId, setExpandedTradeId] = useState<number | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [suggestions, setSuggestions] = useState<{ symbol: string; name: string }[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load from localStorage on mount
@@ -121,6 +135,33 @@ export default function VirtualTrader() {
     setTimeout(() => setToast(null), 3500);
   };
 
+  const handleSymbolInput = (val: string) => {
+    const upper = val.toUpperCase();
+    setForm((f) => ({ ...f, symbol: upper }));
+    if (upper.length >= 1) {
+      const matches = ALL_STOCKS.filter(
+        (s) =>
+          s.symbol.replace(".NS", "").startsWith(upper) ||
+          s.name.toUpperCase().includes(upper)
+      ).slice(0, 6);
+      setSuggestions(matches);
+      setShowSuggestions(matches.length > 0);
+    } else {
+      setShowSuggestions(false);
+    }
+  };
+
+  const selectSuggestion = async (stock: { symbol: string; name: string }) => {
+    setShowSuggestions(false);
+    setForm((f) => ({ ...f, symbol: stock.symbol, name: stock.name }));
+    setSearchLoading(true);
+    setSearchResult(null);
+    const r = await fetchPrice(stock.symbol);
+    if (r) setSearchResult(r);
+    else showToast("Could not fetch price.", "error");
+    setSearchLoading(false);
+  };
+
   const handleReset = () => {
     clearState();
     setCapital(INITIAL_CAPITAL);
@@ -132,10 +173,11 @@ export default function VirtualTrader() {
   };
 
   const refreshPrices = useCallback(async () => {
-    const symbols = [
+    const symbols = Array.from(new Set([
+      ...ALL_STOCKS.map(s => s.symbol),
       ...Object.keys(portfolio),
       ...(form.symbol && searchResult ? [form.symbol] : []),
-    ];
+    ]));
     if (!symbols.length) return;
     const updates: Record<string, any> = {};
     await Promise.all(
@@ -324,7 +366,40 @@ export default function VirtualTrader() {
               <div>
                 <label style={{ fontSize: 11, color: "#64748b", display: "block", marginBottom: 4 }}>STOCK SYMBOL (NSE)</label>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <input value={form.symbol} onChange={(e) => setForm((f) => ({ ...f, symbol: e.target.value.toUpperCase() }))} placeholder="e.g. RELIANCE" style={{ ...inp(), flex: 1 }} onKeyDown={(e) => e.key === "Enter" && handleSearch()} />
+                  <div style={{ flex: 1, position: "relative" }}>
+                    <input
+                      value={form.symbol}
+                      onChange={(e) => handleSymbolInput(e.target.value)}
+                      onFocus={() => form.symbol.length >= 1 && setShowSuggestions(suggestions.length > 0)}
+                      onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                      placeholder="e.g. RELIANCE or search name"
+                      style={{ ...inp(), width: "100%" }}
+                      onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                    />
+                    {showSuggestions && (
+                      <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#1a1d2e", border: "1px solid #6366f1", borderRadius: 8, zIndex: 100, overflow: "hidden", marginTop: 4, boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
+                        {suggestions.map((s) => (
+                          <div
+                            key={s.symbol}
+                            onMouseDown={() => selectSuggestion(s)}
+                            style={{ padding: "9px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #2d3148" }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = "#6366f115")}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                          >
+                            <div>
+                              <span style={{ fontWeight: 700, fontSize: 13, color: "#e2e8f0" }}>{s.symbol.replace(".NS", "")}</span>
+                              <span style={{ fontSize: 11, color: "#64748b", marginLeft: 8 }}>{s.name}</span>
+                            </div>
+                            {prices[s.symbol] && (
+                              <span style={{ fontSize: 12, fontWeight: 600, color: prices[s.symbol].price >= prices[s.symbol].prev ? "#10b981" : "#ef4444" }}>
+                                {new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(prices[s.symbol].price)}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <button onClick={handleSearch} disabled={searchLoading} title="Search price" style={{ background: "#6366f1", color: "#fff", border: "none", borderRadius: 8, padding: "9px 13px", cursor: searchLoading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", minWidth: 40, opacity: searchLoading ? 0.7 : 1 }}>
                     {searchLoading
                       ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: "spin 0.8s linear infinite" }}><path d="M12 2a10 10 0 0 1 10 10" /></svg>
@@ -358,18 +433,8 @@ export default function VirtualTrader() {
                 </div>
               </div>
               <div style={{ borderTop: "1px solid #2d3148", paddingTop: 12 }}>
-                <div style={{ fontSize: 11, color: "#a78bfa", fontWeight: 600, marginBottom: 8 }}>STRATEGY NOTES</div>
-                <label style={{ fontSize: 11, color: "#64748b", display: "block", marginBottom: 6 }}>STRATEGY TYPE</label>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                  {STRATEGY_TAGS.map((tag) => (
-                    <button key={tag} onClick={() => setForm((f) => ({ ...f, strategyTag: f.strategyTag === tag ? "" : tag }))}
-                      style={{ padding: "4px 10px", borderRadius: 20, border: `1px solid ${form.strategyTag === tag ? "#6366f1" : "#2d3148"}`, background: form.strategyTag === tag ? "#6366f130" : "transparent", color: form.strategyTag === tag ? "#a78bfa" : "#64748b", fontSize: 11, cursor: "pointer", fontWeight: form.strategyTag === tag ? 700 : 400 }}>
-                      {tag}
-                    </button>
-                  ))}
-                </div>
-                <label style={{ fontSize: 11, color: "#64748b", display: "block", marginBottom: 4 }}>WHY THIS TRADE?</label>
-                <textarea value={form.strategyNote} onChange={(e) => setForm((f) => ({ ...f, strategyNote: e.target.value }))} placeholder="e.g. EMA crossover on 15min, volume spike, above key resistance..." rows={3} style={{ ...inp(), resize: "vertical", lineHeight: 1.5 }} />
+                <label style={{ fontSize: 11, color: "#a78bfa", fontWeight: 600, display: "block", marginBottom: 6 }}>WHY THIS TRADE?</label>
+                <textarea value={form.strategyNote} onChange={(e) => setForm((f) => ({ ...f, strategyNote: e.target.value }))} placeholder="e.g. EMA crossover on 15min, volume spike, above key resistance at 2450..." rows={3} style={{ ...inp(), resize: "vertical", lineHeight: 1.5 }} />
               </div>
               {searchResult && form.qty && (
                 <div style={{ background: "#0f1117", borderRadius: 8, padding: "10px 12px", fontSize: 12, color: "#94a3b8" }}>
@@ -381,28 +446,54 @@ export default function VirtualTrader() {
               </button>
             </div>
 
-            {/* Quick Select */}
-            <div style={{ background: "#1a1d2e", border: "1px solid #2d3148", borderRadius: 12, padding: 20 }}>
-              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 14, color: "#a78bfa" }}>Quick Select — NSE Stocks</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {POPULAR_STOCKS.map((s) => (
-                  <button key={s.symbol} onClick={() => handleQuickSelect(s)} style={{ background: form.symbol === s.symbol ? "#6366f120" : "#0f1117", border: `1px solid ${form.symbol === s.symbol ? "#6366f1" : "#2d3148"}`, borderRadius: 8, padding: "10px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ textAlign: "left" }}>
-                      <div style={{ fontWeight: 600, fontSize: 12, color: "#e2e8f0" }}>{s.symbol.replace(".NS", "")}</div>
-                      <div style={{ fontSize: 11, color: "#64748b" }}>{s.name}</div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      {prices[s.symbol] ? (
-                        <>
-                          <div style={{ fontWeight: 700, fontSize: 13, color: "#e2e8f0" }}>{formatCurrency(prices[s.symbol].price)}</div>
-                          <div style={{ fontSize: 11, color: prices[s.symbol].price >= prices[s.symbol].prev ? "#10b981" : "#ef4444" }}>
-                            {formatPct(((prices[s.symbol].price - prices[s.symbol].prev) / prices[s.symbol].prev) * 100)}
+            {/* Top Movers */}
+            <div style={{ background: "#1a1d2e", border: "1px solid #2d3148", borderRadius: 12, padding: 20, display: "flex", flexDirection: "column" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#a78bfa" }}>🔥 Top Movers</div>
+                  <div style={{ fontSize: 11, color: "#475569" }}>Sorted by % change · Nifty 50</div>
+                </div>
+                <button onClick={refreshPrices} style={{ background: "#6366f120", color: "#6366f1", border: "1px solid #6366f140", borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>↻ Refresh</button>
+              </div>
+              <div style={{ overflowY: "auto", maxHeight: 480, display: "flex", flexDirection: "column", gap: 6 }}>
+                {(() => {
+                  const withPrices = ALL_STOCKS
+                    .filter(s => prices[s.symbol])
+                    .map(s => ({ ...s, pct: ((prices[s.symbol].price - prices[s.symbol].prev) / prices[s.symbol].prev) * 100 }))
+                    .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct));
+                  const withoutPrices = ALL_STOCKS.filter(s => !prices[s.symbol]);
+                  return [...withPrices, ...withoutPrices].map((s: any) => {
+                    const p = prices[s.symbol];
+                    const pct = p ? ((p.price - p.prev) / p.prev) * 100 : null;
+                    const isGainer = pct !== null && pct > 0;
+                    const isLoser = pct !== null && pct < 0;
+                    return (
+                      <button key={s.symbol} onClick={() => handleQuickSelect(s)}
+                        style={{ background: form.symbol === s.symbol ? "#6366f120" : "#0f1117", border: `1px solid ${form.symbol === s.symbol ? "#6366f1" : "#2d3148"}`, borderRadius: 8, padding: "9px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ textAlign: "left" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontWeight: 700, fontSize: 12, color: "#e2e8f0" }}>{s.symbol.replace(".NS", "")}</span>
+                            {isGainer && <span style={{ fontSize: 9, background: "#10b98120", color: "#10b981", borderRadius: 3, padding: "1px 5px", fontWeight: 700 }}>▲</span>}
+                            {isLoser && <span style={{ fontSize: 9, background: "#ef444420", color: "#ef4444", borderRadius: 3, padding: "1px 5px", fontWeight: 700 }}>▼</span>}
                           </div>
-                        </>
-                      ) : <div style={{ fontSize: 11, color: "#475569" }}>—</div>}
-                    </div>
-                  </button>
-                ))}
+                          <div style={{ fontSize: 11, color: "#64748b" }}>{s.name}</div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          {p ? (
+                            <>
+                              <div style={{ fontWeight: 700, fontSize: 13, color: "#e2e8f0" }}>{formatCurrency(p.price)}</div>
+                              <div style={{ fontSize: 11, fontWeight: 600, color: isGainer ? "#10b981" : isLoser ? "#ef4444" : "#64748b" }}>
+                                {pct !== null ? formatPct(pct) : "—"}
+                              </div>
+                            </>
+                          ) : (
+                            <div style={{ fontSize: 11, color: "#475569" }}>Loading…</div>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  });
+                })()}
               </div>
             </div>
           </div>
