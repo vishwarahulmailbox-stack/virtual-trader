@@ -51,38 +51,16 @@ function clearState() {
   try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
 }
 
-// ── Yahoo Finance via CORS proxies ──
+// ── Price fetch via our own Next.js API route (server-side, no CORS) ──
 async function fetchPrice(symbol: string): Promise<{ price: number; prev: number } | null> {
-  const yahooUrls = [
-    `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1d`,
-    `https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1d`,
-    `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${symbol}`,
-  ];
-  const wrapProxy = [
-    (u: string) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-    (u: string) => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
-    (u: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
-    (u: string) => `https://thingproxy.freeboard.io/fetch/${u}`,
-  ];
-
-  for (const yahooUrl of yahooUrls) {
-    for (const proxy of wrapProxy) {
-      try {
-        const res = await fetch(proxy(yahooUrl), { signal: AbortSignal.timeout(8000) });
-        if (!res.ok) continue;
-        const text = await res.text();
-        let parsed: any;
-        try { parsed = JSON.parse(text); } catch { continue; }
-        const data = parsed.contents ? JSON.parse(parsed.contents) : parsed;
-        const chartMeta = data?.chart?.result?.[0]?.meta;
-        if (chartMeta?.regularMarketPrice)
-          return { price: chartMeta.regularMarketPrice, prev: chartMeta.previousClose || chartMeta.regularMarketPrice };
-        const quote = data?.quoteResponse?.result?.[0];
-        if (quote?.regularMarketPrice)
-          return { price: quote.regularMarketPrice, prev: quote.regularMarketPreviousClose || quote.regularMarketPrice };
-      } catch { continue; }
-    }
-  }
+  try {
+    const res = await fetch(`/api/price?symbol=${encodeURIComponent(symbol)}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.price) return { price: data.price, prev: data.prev };
+  } catch (_) {}
   return null;
 }
 
