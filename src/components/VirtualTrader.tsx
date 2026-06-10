@@ -106,6 +106,7 @@ export default function VirtualTrader() {
   const [toast, setToast] = useState<{ msg: string; type: string } | null>(null);
   const [expandedTradeId, setExpandedTradeId] = useState<number | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [suggestions, setSuggestions] = useState<{ symbol: string; name: string }[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -120,6 +121,13 @@ export default function VirtualTrader() {
       setTrades(saved.trades ?? []);
     }
     setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
   }, []);
 
   // Debounced save
@@ -339,7 +347,7 @@ export default function VirtualTrader() {
 
       <div style={{ padding: "24px", maxWidth: 960, margin: "0 auto" }}>
         {/* Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(4,1fr)", gap: 12, marginBottom: 24 }}>
           {[
             { label: "Available Cash", value: formatCurrency(capital), color: "#e2e8f0" },
             { label: "Unrealized P&L", value: formatCurrency(unrealizedPnL), color: unrealizedPnL >= 0 ? "#10b981" : "#ef4444" },
@@ -355,7 +363,7 @@ export default function VirtualTrader() {
 
         {/* ── TRADE TAB ── */}
         {tab === "trade" && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 20 }}>
             <div style={{ background: "#1a1d2e", border: "1px solid #2d3148", borderRadius: 12, padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
               <div style={{ fontWeight: 700, fontSize: 14, color: "#a78bfa" }}>Place Order</div>
               <div style={{ display: "flex", background: "#0f1117", borderRadius: 8, padding: 3 }}>
@@ -549,7 +557,7 @@ export default function VirtualTrader() {
         {/* ── HISTORY TAB ── */}
         {tab === "history" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3,1fr)", gap: 12 }}>
               {[
                 { label: "Closed Trades", value: trades.filter((t) => t.action === "SELL").length, color: "#e2e8f0" },
                 { label: "Wins", value: wins, color: "#10b981" },
