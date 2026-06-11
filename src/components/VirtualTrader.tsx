@@ -9,9 +9,6 @@ import {
 const INITIAL_CAPITAL = 100000;
 const STORAGE_KEY = "vt-state";
 
-
-
-
 const formatCurrency = (val: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(val);
 
