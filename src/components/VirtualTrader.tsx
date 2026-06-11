@@ -71,7 +71,7 @@ export default function VirtualTrader() {
   const [prices, setPrices] = useState<Record<string, { price: number; prev: number }>>({});
   const [loading, setLoading] = useState<Record<string, boolean>>({});
   const [form, setForm] = useState({
-    symbol: "", name: "", qty: "", action: "BUY",
+    symbol: "", name: "", qty: "1", action: "BUY",
     stopLoss: "", target: "", strategyTag: "", strategyNote: "",
   });
   const [searchResult, setSearchResult] = useState<{ price: number; prev: number } | null>(null);
@@ -152,8 +152,14 @@ export default function VirtualTrader() {
     setSearchLoading(true);
     setSearchResult(null);
     const r = await fetchPrice(stock.symbol);
-    if (r) setSearchResult(r);
-    else showToast("Could not fetch price.", "error");
+    if (r) {
+      setSearchResult(r);
+      setForm((f) => ({
+        ...f,
+        stopLoss: (r.price * 0.98).toFixed(2),
+        target: (r.price * 1.05).toFixed(2),
+      }));
+    } else showToast("Could not fetch price.", "error");
     setSearchLoading(false);
   };
 
@@ -221,8 +227,15 @@ export default function VirtualTrader() {
       ? form.symbol.toUpperCase()
       : form.symbol.toUpperCase() + ".NS";
     const r = await fetchPrice(sym);
-    if (r) { setSearchResult(r); setForm((f) => ({ ...f, symbol: sym })); }
-    else showToast("Could not fetch price. Check symbol.", "error");
+    if (r) {
+      setSearchResult(r);
+      setForm((f) => ({
+        ...f,
+        symbol: sym,
+        stopLoss: (r.price * 0.98).toFixed(2),
+        target: (r.price * 1.05).toFixed(2),
+      }));
+    } else showToast("Could not fetch price. Check symbol.", "error");
     setSearchLoading(false);
   };
 
@@ -231,7 +244,14 @@ export default function VirtualTrader() {
     setSearchLoading(true);
     setSearchResult(null);
     const r = await fetchPrice(stock.symbol);
-    if (r) setSearchResult(r);
+    if (r) {
+      setSearchResult(r);
+      setForm((f) => ({
+        ...f,
+        stopLoss: (r.price * 0.98).toFixed(2),
+        target: (r.price * 1.05).toFixed(2),
+      }));
+    }
     setSearchLoading(false);
   };
 
@@ -271,8 +291,24 @@ export default function VirtualTrader() {
       setTrades((t) => [{ id: Date.now(), date: new Date().toLocaleString("en-IN"), symbol, name: name || symbol, action, qty: q, price, total, pnl, strategyTag: strategyTag || null, strategyNote: strategyNote || null }, ...t]);
       showToast(`Sold ${q} shares @ ${formatCurrency(price)} | P&L: ${formatCurrency(pnl)}`);
     }
-    setForm({ symbol: "", name: "", qty: "", action: "BUY", stopLoss: "", target: "", strategyTag: "", strategyNote: "" });
+    setForm({ symbol: "", name: "", qty: "1", action: "BUY", stopLoss: "", target: "", strategyTag: "", strategyNote: "" });
     setSearchResult(null);
+  };
+
+  const handleExitFromPortfolio = (sym: string, pos: any) => {
+    const ltp = prices[sym]?.price || pos.avgPrice;
+    setForm({
+      symbol: sym,
+      name: pos.name,
+      qty: String(pos.qty),
+      action: "SELL",
+      stopLoss: "",
+      target: "",
+      strategyTag: "",
+      strategyNote: "",
+    });
+    setSearchResult({ price: ltp, prev: prices[sym]?.prev || ltp });
+    setTab("trade");
   };
 
   const pnlChartData = (() => {
@@ -428,12 +464,12 @@ export default function VirtualTrader() {
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <div>
-                  <label style={{ fontSize: 11, color: "#ef4444", display: "block", marginBottom: 4 }}>STOP LOSS ₹</label>
-                  <input type="number" value={form.stopLoss} onChange={(e) => setForm((f) => ({ ...f, stopLoss: e.target.value }))} placeholder="Optional" style={inp()} />
+                  <label style={{ fontSize: 11, color: "#ef4444", display: "block", marginBottom: 4 }}>STOP LOSS ₹ <span style={{ color: "#475569", fontWeight: 400 }}>(−2%)</span></label>
+                  <input type="number" value={form.stopLoss} onChange={(e) => setForm((f) => ({ ...f, stopLoss: e.target.value }))} placeholder="Auto-calculated" style={inp()} />
                 </div>
                 <div>
-                  <label style={{ fontSize: 11, color: "#10b981", display: "block", marginBottom: 4 }}>TARGET ₹</label>
-                  <input type="number" value={form.target} onChange={(e) => setForm((f) => ({ ...f, target: e.target.value }))} placeholder="Optional" style={inp()} />
+                  <label style={{ fontSize: 11, color: "#10b981", display: "block", marginBottom: 4 }}>TARGET ₹ <span style={{ color: "#475569", fontWeight: 400 }}>(+5%)</span></label>
+                  <input type="number" value={form.target} onChange={(e) => setForm((f) => ({ ...f, target: e.target.value }))} placeholder="Auto-calculated" style={inp()} />
                 </div>
               </div>
               <div style={{ borderTop: "1px solid #2d3148", paddingTop: 12 }}>
@@ -552,6 +588,11 @@ export default function VirtualTrader() {
                           </div>
                         ))}
                       </div>
+                      <button
+                        onClick={() => handleExitFromPortfolio(sym, pos)}
+                        style={{ marginTop: 10, width: "100%", padding: "9px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#ef4444,#dc2626)", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                        Exit Position
+                      </button>
                     </div>
                   );
                 })}
@@ -561,7 +602,7 @@ export default function VirtualTrader() {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: "#0f1117" }}>
-                    {["Symbol", "Qty", "Avg Price", "LTP", "Invested", "Current", "P&L", "Stop Loss", "Target"].map((h) => (
+                    {["Symbol", "Qty", "Avg Price", "LTP", "Invested", "Current", "P&L", "Stop Loss", "Target", "Exit"].map((h) => (
                       <th key={h} style={{ padding: "10px 16px", textAlign: "left", fontSize: 11, color: "#64748b", fontWeight: 600 }}>{h}</th>
                     ))}
                   </tr>
@@ -586,6 +627,13 @@ export default function VirtualTrader() {
                         </td>
                         <td style={{ padding: "12px 16px", fontSize: 12, color: "#ef4444" }}>{pos.stopLoss ? formatCurrency(pos.stopLoss) : "—"}</td>
                         <td style={{ padding: "12px 16px", fontSize: 12, color: "#10b981" }}>{pos.target ? formatCurrency(pos.target) : "—"}</td>
+                        <td style={{ padding: "12px 16px" }}>
+                          <button
+                            onClick={() => handleExitFromPortfolio(sym, pos)}
+                            style={{ background: "#ef444415", color: "#ef4444", border: "1px solid #ef444430", borderRadius: 6, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+                            Exit
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
