@@ -9,33 +9,6 @@ import {
 const INITIAL_CAPITAL = 100000;
 const STORAGE_KEY = "vt-state";
 
-const ALL_STOCKS = [
-  { symbol: "RELIANCE.NS", name: "Reliance Industries" },
-  { symbol: "TCS.NS", name: "Tata Consultancy Services" },
-  { symbol: "HDFCBANK.NS", name: "HDFC Bank" },
-  { symbol: "INFY.NS", name: "Infosys" },
-  { symbol: "ICICIBANK.NS", name: "ICICI Bank" },
-  { symbol: "WIPRO.NS", name: "Wipro" },
-  { symbol: "SBIN.NS", name: "State Bank of India" },
-  { symbol: "BAJFINANCE.NS", name: "Bajaj Finance" },
-  { symbol: "TATAMOTORS.NS", name: "Tata Motors" },
-  { symbol: "ADANIENT.NS", name: "Adani Enterprises" },
-  { symbol: "HINDUNILVR.NS", name: "Hindustan Unilever" },
-  { symbol: "ASIANPAINT.NS", name: "Asian Paints" },
-  { symbol: "MARUTI.NS", name: "Maruti Suzuki" },
-  { symbol: "AXISBANK.NS", name: "Axis Bank" },
-  { symbol: "HCLTECH.NS", name: "HCL Technologies" },
-  { symbol: "SUNPHARMA.NS", name: "Sun Pharmaceutical" },
-  { symbol: "ULTRACEMCO.NS", name: "UltraTech Cement" },
-  { symbol: "TITAN.NS", name: "Titan Company" },
-  { symbol: "NESTLEIND.NS", name: "Nestle India" },
-  { symbol: "POWERGRID.NS", name: "Power Grid Corp" },
-  { symbol: "NTPC.NS", name: "NTPC" },
-  { symbol: "ONGC.NS", name: "ONGC" },
-  { symbol: "COALINDIA.NS", name: "Coal India" },
-  { symbol: "BHARTIARTL.NS", name: "Bharti Airtel" },
-  { symbol: "TECHM.NS", name: "Tech Mahindra" },
-];
 
 
 
@@ -110,7 +83,18 @@ export default function VirtualTrader() {
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [suggestions, setSuggestions] = useState<{ symbol: string; name: string }[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [topMovers, setTopMovers] = useState<any[]>([]);
+  const [moversLoading, setMoversLoading] = useState(true);
+  const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Detect mobile viewport
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   // Load from localStorage on mount
   useEffect(() => {
@@ -123,12 +107,13 @@ export default function VirtualTrader() {
     setHydrated(true);
   }, []);
 
+  // Fetch top movers on mount + every 5 min
   useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < 768);
-    check();
-    window.addEventListener("resize", check);
-    return () => window.removeEventListener("resize", check);
-  }, []);
+    if (!hydrated) return;
+    fetchTopMovers();
+    const id = setInterval(fetchTopMovers, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [hydrated]);
 
   // Debounced save
   useEffect(() => {
@@ -144,19 +129,21 @@ export default function VirtualTrader() {
   };
 
   const handleSymbolInput = (val: string) => {
-    const upper = val.toUpperCase();
-    setForm((f) => ({ ...f, symbol: upper }));
-    if (upper.length >= 1) {
-      const matches = ALL_STOCKS.filter(
-        (s) =>
-          s.symbol.replace(".NS", "").startsWith(upper) ||
-          s.name.toUpperCase().includes(upper)
-      ).slice(0, 6);
-      setSuggestions(matches);
-      setShowSuggestions(matches.length > 0);
-    } else {
-      setShowSuggestions(false);
-    }
+    setForm((f) => ({ ...f, symbol: val.toUpperCase() }));
+    if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    if (val.trim().length < 1) { setSuggestions([]); setShowSuggestions(false); return; }
+    searchDebounce.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/search?q=${encodeURIComponent(val)}`);
+        const data = await res.json();
+        if (data.results?.length) {
+          setSuggestions(data.results);
+          setShowSuggestions(true);
+        } else {
+          setShowSuggestions(false);
+        }
+      } catch { setShowSuggestions(false); }
+    }, 250);
   };
 
   const selectSuggestion = async (stock: { symbol: string; name: string }) => {
@@ -168,6 +155,16 @@ export default function VirtualTrader() {
     if (r) setSearchResult(r);
     else showToast("Could not fetch price.", "error");
     setSearchLoading(false);
+  };
+
+  const fetchTopMovers = async () => {
+    setMoversLoading(true);
+    try {
+      const res = await fetch("/api/top-movers");
+      const data = await res.json();
+      if (data.movers?.length) setTopMovers(data.movers);
+    } catch (_) {}
+    setMoversLoading(false);
   };
 
   const handleReset = () => {
@@ -182,7 +179,6 @@ export default function VirtualTrader() {
 
   const refreshPrices = useCallback(async () => {
     const symbols = Array.from(new Set([
-      ...ALL_STOCKS.map(s => s.symbol),
       ...Object.keys(portfolio),
       ...(form.symbol && searchResult ? [form.symbol] : []),
     ]));
@@ -315,7 +311,7 @@ export default function VirtualTrader() {
       <style>{`@keyframes spin { to { transform: rotate(360deg); } } * { box-sizing: border-box; }`}</style>
 
       {/* Header */}
-      <div style={{ background: "#1a1d2e", borderBottom: "1px solid #2d3148", padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ background: "#1a1d2e", borderBottom: "1px solid #2d3148", padding: isMobile ? "12px 16px" : "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 36, height: 36, borderRadius: 8, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>📈</div>
           <div>
@@ -337,7 +333,7 @@ export default function VirtualTrader() {
       </div>
 
       {/* Tabs */}
-      <div style={{ background: "#1a1d2e", borderBottom: "1px solid #2d3148", padding: "0 24px", display: "flex" }}>
+      <div style={{ background: "#1a1d2e", borderBottom: "1px solid #2d3148", padding: isMobile ? "0 8px" : "0 24px", display: "flex" }}>
         {["trade", "portfolio", "history"].map((t) => (
           <button key={t} onClick={() => setTab(t)} style={{ background: "none", border: "none", color: tab === t ? "#6366f1" : "#64748b", fontWeight: 600, fontSize: 13, padding: "12px 16px", cursor: "pointer", borderBottom: tab === t ? "2px solid #6366f1" : "2px solid transparent", textTransform: "capitalize" }}>
             {t === "trade" ? "🔄 Trade" : t === "portfolio" ? "💼 Portfolio" : "📋 History"}
@@ -345,9 +341,9 @@ export default function VirtualTrader() {
         ))}
       </div>
 
-      <div style={{ padding: "24px", maxWidth: 960, margin: "0 auto" }}>
+      <div style={{ padding: isMobile ? "12px" : "24px", maxWidth: 960, margin: "0 auto" }}>
         {/* Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(4,1fr)", gap: 12, marginBottom: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(4,1fr)", gap: isMobile ? 8 : 12, marginBottom: isMobile ? 16 : 24 }}>
           {[
             { label: "Available Cash", value: formatCurrency(capital), color: "#e2e8f0" },
             { label: "Unrealized P&L", value: formatCurrency(unrealizedPnL), color: unrealizedPnL >= 0 ? "#10b981" : "#ef4444" },
@@ -363,7 +359,7 @@ export default function VirtualTrader() {
 
         {/* ── TRADE TAB ── */}
         {tab === "trade" && (
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: isMobile ? 16 : 20 }}>
             <div style={{ background: "#1a1d2e", border: "1px solid #2d3148", borderRadius: 12, padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
               <div style={{ fontWeight: 700, fontSize: 14, color: "#a78bfa" }}>Place Order</div>
               <div style={{ display: "flex", background: "#0f1117", borderRadius: 8, padding: 3 }}>
@@ -454,54 +450,59 @@ export default function VirtualTrader() {
               </button>
             </div>
 
-            {/* Top Movers */}
+            {/* Top Movers — dynamic from Yahoo Finance */}
             <div style={{ background: "#1a1d2e", border: "1px solid #2d3148", borderRadius: 12, padding: 20, display: "flex", flexDirection: "column" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 14, color: "#a78bfa" }}>🔥 Top Movers</div>
-                  <div style={{ fontSize: 11, color: "#475569" }}>Sorted by % change · Nifty 50</div>
+                  <div style={{ fontSize: 11, color: "#475569" }}>Biggest % moves today · Nifty 50</div>
                 </div>
-                <button onClick={refreshPrices} style={{ background: "#6366f120", color: "#6366f1", border: "1px solid #6366f140", borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>↻ Refresh</button>
+                <button onClick={fetchTopMovers} disabled={moversLoading} style={{ background: "#6366f120", color: "#6366f1", border: "1px solid #6366f140", borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontSize: 11, fontWeight: 600, opacity: moversLoading ? 0.6 : 1 }}>
+                  {moversLoading ? "..." : "↻ Refresh"}
+                </button>
               </div>
-              <div style={{ overflowY: "auto", maxHeight: 480, display: "flex", flexDirection: "column", gap: 6 }}>
-                {(() => {
-                  const withPrices = ALL_STOCKS
-                    .filter(s => prices[s.symbol])
-                    .map(s => ({ ...s, pct: ((prices[s.symbol].price - prices[s.symbol].prev) / prices[s.symbol].prev) * 100 }))
-                    .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct));
-                  const withoutPrices = ALL_STOCKS.filter(s => !prices[s.symbol]);
-                  return [...withPrices, ...withoutPrices].map((s: any) => {
-                    const p = prices[s.symbol];
-                    const pct = p ? ((p.price - p.prev) / p.prev) * 100 : null;
-                    const isGainer = pct !== null && pct > 0;
-                    const isLoser = pct !== null && pct < 0;
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {moversLoading && topMovers.length === 0 ? (
+                  Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} style={{ background: "#0f1117", borderRadius: 8, padding: "12px 14px", display: "flex", justifyContent: "space-between" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <div style={{ width: 60, height: 10, background: "#2d3148", borderRadius: 4 }} />
+                        <div style={{ width: 100, height: 9, background: "#2d3148", borderRadius: 4 }} />
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+                        <div style={{ width: 70, height: 10, background: "#2d3148", borderRadius: 4 }} />
+                        <div style={{ width: 45, height: 9, background: "#2d3148", borderRadius: 4 }} />
+                      </div>
+                    </div>
+                  ))
+                ) : topMovers.length === 0 ? (
+                  <div style={{ padding: "24px 0", textAlign: "center", color: "#475569", fontSize: 12 }}>Could not load movers. Market may be closed.</div>
+                ) : (
+                  topMovers.map((s) => {
+                    const isGainer = s.pct > 0;
+                    const isLoser = s.pct < 0;
                     return (
                       <button key={s.symbol} onClick={() => handleQuickSelect(s)}
-                        style={{ background: form.symbol === s.symbol ? "#6366f120" : "#0f1117", border: `1px solid ${form.symbol === s.symbol ? "#6366f1" : "#2d3148"}`, borderRadius: 8, padding: "9px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ textAlign: "left" }}>
+                        style={{ background: form.symbol === s.symbol ? "#6366f120" : "#0f1117", border: `1px solid ${form.symbol === s.symbol ? "#6366f1" : "#2d3148"}`, borderRadius: 8, padding: "10px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", textAlign: "left" }}>
+                        <div>
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <span style={{ fontWeight: 700, fontSize: 12, color: "#e2e8f0" }}>{s.symbol.replace(".NS", "")}</span>
-                            {isGainer && <span style={{ fontSize: 9, background: "#10b98120", color: "#10b981", borderRadius: 3, padding: "1px 5px", fontWeight: 700 }}>▲</span>}
-                            {isLoser && <span style={{ fontSize: 9, background: "#ef444420", color: "#ef4444", borderRadius: 3, padding: "1px 5px", fontWeight: 700 }}>▼</span>}
+                            <span style={{ fontWeight: 700, fontSize: 13, color: "#e2e8f0" }}>{s.symbol.replace(".NS", "").replace(".BO", "")}</span>
+                            <span style={{ fontSize: 9, background: isGainer ? "#10b98120" : isLoser ? "#ef444420" : "#2d3148", color: isGainer ? "#10b981" : isLoser ? "#ef4444" : "#64748b", borderRadius: 3, padding: "1px 5px", fontWeight: 700 }}>
+                              {isGainer ? "▲" : isLoser ? "▼" : "—"}
+                            </span>
                           </div>
-                          <div style={{ fontSize: 11, color: "#64748b" }}>{s.name}</div>
+                          <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{s.name}</div>
                         </div>
                         <div style={{ textAlign: "right" }}>
-                          {p ? (
-                            <>
-                              <div style={{ fontWeight: 700, fontSize: 13, color: "#e2e8f0" }}>{formatCurrency(p.price)}</div>
-                              <div style={{ fontSize: 11, fontWeight: 600, color: isGainer ? "#10b981" : isLoser ? "#ef4444" : "#64748b" }}>
-                                {pct !== null ? formatPct(pct) : "—"}
-                              </div>
-                            </>
-                          ) : (
-                            <div style={{ fontSize: 11, color: "#475569" }}>Loading…</div>
-                          )}
+                          <div style={{ fontWeight: 700, fontSize: 13, color: "#e2e8f0" }}>{formatCurrency(s.price)}</div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: isGainer ? "#10b981" : isLoser ? "#ef4444" : "#64748b" }}>
+                            {s.pct >= 0 ? "+" : ""}{s.pct.toFixed(2)}%
+                          </div>
                         </div>
                       </button>
                     );
-                  });
-                })()}
+                  })
+                )}
               </div>
             </div>
           </div>
@@ -516,7 +517,47 @@ export default function VirtualTrader() {
             </div>
             {Object.keys(portfolio).length === 0 ? (
               <div style={{ padding: 40, textAlign: "center", color: "#475569" }}>No holdings yet.</div>
+            ) : isMobile ? (
+              // Mobile card view
+              <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                {Object.entries(portfolio).map(([sym, pos]: any, i) => {
+                  const ltp = prices[sym]?.price || pos.avgPrice;
+                  const inv = pos.avgPrice * pos.qty;
+                  const cur = ltp * pos.qty;
+                  const pnl = cur - inv;
+                  return (
+                    <div key={sym} style={{ padding: "14px 16px", borderTop: i === 0 ? "none" : "1px solid #2d3148" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: 15, color: "#e2e8f0" }}>{sym.replace(".NS", "").replace(".BO", "")}</div>
+                          <div style={{ fontSize: 11, color: "#64748b" }}>{pos.name}</div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontWeight: 700, fontSize: 15, color: pnl >= 0 ? "#10b981" : "#ef4444" }}>{formatCurrency(pnl)}</div>
+                          <div style={{ fontSize: 11, color: pnl >= 0 ? "#10b981" : "#ef4444" }}>{formatPct((pnl / inv) * 100)}</div>
+                        </div>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                        {[
+                          { label: "Qty", value: pos.qty },
+                          { label: "Avg", value: formatCurrency(pos.avgPrice) },
+                          { label: "LTP", value: loading[sym] ? "..." : formatCurrency(ltp) },
+                          { label: "Invested", value: formatCurrency(inv) },
+                          { label: "Current", value: formatCurrency(cur) },
+                          { label: "SL / TGT", value: `${pos.stopLoss ? formatCurrency(pos.stopLoss) : "—"} / ${pos.target ? formatCurrency(pos.target) : "—"}` },
+                        ].map((d) => (
+                          <div key={d.label} style={{ background: "#0f1117", borderRadius: 6, padding: "7px 10px" }}>
+                            <div style={{ fontSize: 9, color: "#64748b", marginBottom: 2, fontWeight: 600 }}>{d.label}</div>
+                            <div style={{ fontSize: 12, color: "#e2e8f0", fontWeight: 600 }}>{d.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             ) : (
+              // Desktop table view
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: "#0f1117" }}>
@@ -557,7 +598,7 @@ export default function VirtualTrader() {
         {/* ── HISTORY TAB ── */}
         {tab === "history" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3,1fr)", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: isMobile ? 6 : 12 }}>
               {[
                 { label: "Closed Trades", value: trades.filter((t) => t.action === "SELL").length, color: "#e2e8f0" },
                 { label: "Wins", value: wins, color: "#10b981" },
@@ -597,15 +638,38 @@ export default function VirtualTrader() {
                 const isExpanded = expandedTradeId === t.id;
                 return (
                   <div key={t.id} style={{ borderTop: i === 0 ? "none" : "1px solid #2d3148" }}>
-                    <div onClick={() => setExpandedTradeId(isExpanded ? null : t.id)} style={{ display: "grid", gridTemplateColumns: "1.4fr 1.2fr 0.7fr 0.8fr 1fr 1fr 1fr 0.4fr", cursor: "pointer", background: isExpanded ? "#6366f108" : "transparent" }}>
-                      <div style={{ padding: "12px 16px", fontSize: 12, color: "#94a3b8" }}>{t.date}</div>
-                      <div style={{ padding: "12px 16px" }}><div style={{ fontWeight: 700, fontSize: 13 }}>{t.symbol.replace(".NS", "")}</div><div style={{ fontSize: 11, color: "#64748b" }}>{t.name}</div></div>
-                      <div style={{ padding: "12px 16px" }}><span style={{ background: t.action === "BUY" ? "#10b98120" : "#ef444420", color: t.action === "BUY" ? "#10b981" : "#ef4444", borderRadius: 4, padding: "3px 8px", fontSize: 11, fontWeight: 700 }}>{t.action}</span></div>
-                      <div style={{ padding: "12px 16px", fontSize: 13 }}>{t.qty}</div>
-                      <div style={{ padding: "12px 16px", fontSize: 13 }}>{formatCurrency(t.price)}</div>
-                      <div style={{ padding: "12px 16px", fontSize: 13 }}>{formatCurrency(t.total)}</div>
-                      <div style={{ padding: "12px 16px", fontSize: 13, fontWeight: 600, color: t.pnl === undefined ? "#64748b" : t.pnl >= 0 ? "#10b981" : "#ef4444" }}>{t.pnl !== undefined ? formatCurrency(t.pnl) : "—"}</div>
-                      <div style={{ padding: "12px 16px", fontSize: 12, color: "#475569" }}>{isExpanded ? "▲" : (t.strategyTag || t.strategyNote) ? "📝" : "▼"}</div>
+                    <div onClick={() => setExpandedTradeId(isExpanded ? null : t.id)} style={{ cursor: "pointer", background: isExpanded ? "#6366f108" : "transparent", padding: isMobile ? "12px 14px" : 0, display: isMobile ? "flex" : "grid", gridTemplateColumns: isMobile ? undefined : "1.4fr 1.2fr 0.7fr 0.8fr 1fr 1fr 1fr 0.4fr", flexDirection: isMobile ? "column" : undefined, gap: isMobile ? 6 : undefined }}>
+                      {isMobile ? (
+                        <>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                            <div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <span style={{ fontWeight: 700, fontSize: 14, color: "#e2e8f0" }}>{t.symbol.replace(".NS", "").replace(".BO","")}</span>
+                                <span style={{ background: t.action === "BUY" ? "#10b98120" : "#ef444420", color: t.action === "BUY" ? "#10b981" : "#ef4444", borderRadius: 4, padding: "2px 7px", fontSize: 11, fontWeight: 700 }}>{t.action}</span>
+                              </div>
+                              <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{t.date}</div>
+                            </div>
+                            <div style={{ textAlign: "right" }}>
+                              <div style={{ fontWeight: 700, fontSize: 13, color: t.pnl === undefined ? "#e2e8f0" : t.pnl >= 0 ? "#10b981" : "#ef4444" }}>
+                                {t.pnl !== undefined ? formatCurrency(t.pnl) : formatCurrency(t.total)}
+                              </div>
+                              <div style={{ fontSize: 11, color: "#64748b" }}>{t.qty} × {formatCurrency(t.price)}</div>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 10, color: "#475569", textAlign: "right" }}>{isExpanded ? "▲ collapse" : (t.strategyNote) ? "📝 tap for notes" : "▼ expand"}</div>
+                        </>
+                      ) : (
+                        <>
+                          <div style={{ padding: "12px 16px", fontSize: 12, color: "#94a3b8" }}>{t.date}</div>
+                          <div style={{ padding: "12px 16px" }}><div style={{ fontWeight: 700, fontSize: 13 }}>{t.symbol.replace(".NS", "")}</div><div style={{ fontSize: 11, color: "#64748b" }}>{t.name}</div></div>
+                          <div style={{ padding: "12px 16px" }}><span style={{ background: t.action === "BUY" ? "#10b98120" : "#ef444420", color: t.action === "BUY" ? "#10b981" : "#ef4444", borderRadius: 4, padding: "3px 8px", fontSize: 11, fontWeight: 700 }}>{t.action}</span></div>
+                          <div style={{ padding: "12px 16px", fontSize: 13 }}>{t.qty}</div>
+                          <div style={{ padding: "12px 16px", fontSize: 13 }}>{formatCurrency(t.price)}</div>
+                          <div style={{ padding: "12px 16px", fontSize: 13 }}>{formatCurrency(t.total)}</div>
+                          <div style={{ padding: "12px 16px", fontSize: 13, fontWeight: 600, color: t.pnl === undefined ? "#64748b" : t.pnl >= 0 ? "#10b981" : "#ef4444" }}>{t.pnl !== undefined ? formatCurrency(t.pnl) : "—"}</div>
+                          <div style={{ padding: "12px 16px", fontSize: 12, color: "#475569" }}>{isExpanded ? "▲" : (t.strategyTag || t.strategyNote) ? "📝" : "▼"}</div>
+                        </>
+                      )}
                     </div>
                     {isExpanded && (
                       <div style={{ background: "#0f1117", borderTop: "1px solid #2d3148", padding: "14px 20px", display: "flex", gap: 24 }}>
