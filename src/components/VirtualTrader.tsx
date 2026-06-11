@@ -374,7 +374,9 @@ export default function VirtualTrader() {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 36, height: 36, borderRadius: 8, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>📈</div>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 16, letterSpacing: "-0.3px" }}>VirtualTrader</div>
+            <div style={{ fontWeight: 700, fontSize: 16, letterSpacing: "-0.3px" }}>
+              {isMobile ? "VT" : "VirtualTrader"}
+            </div>
             {!isMobile && (
               <div style={{ fontSize: 11, color: "#64748b", display: "flex", alignItems: "center", gap: 5 }}>
                 NSE/BSE Paper Trading
@@ -472,11 +474,25 @@ export default function VirtualTrader() {
                   </button>
                 </div>
               </div>
+              {/* Stock name display box — shown as soon as a stock is selected/searched */}
+              {(form.name || (form.symbol && searchResult)) && (
+                <div style={{ background: "#0f1117", border: "1px solid #6366f140", borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 6, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+                    {(form.name || form.symbol.replace(".NS","")).charAt(0)}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {form.name || form.symbol.replace(".NS", "")}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#64748b" }}>{form.symbol.replace(".NS","").replace(".BO","")} · NSE</div>
+                  </div>
+                </div>
+              )}
               {searchResult && (
                 <div style={{ background: "#0f1117", borderRadius: 8, padding: "10px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
                     <div style={{ fontWeight: 700, fontSize: 15 }}>{formatCurrency(searchResult.price)}</div>
-                    <div style={{ fontSize: 11, color: "#64748b" }}>{form.symbol}</div>
+                    <div style={{ fontSize: 11, color: "#64748b" }}>Live Price</div>
                   </div>
                   <div style={{ color: searchResult.price >= searchResult.prev ? "#10b981" : "#ef4444", fontWeight: 600, fontSize: 13 }}>
                     {formatPct(((searchResult.price - searchResult.prev) / searchResult.prev) * 100)}
