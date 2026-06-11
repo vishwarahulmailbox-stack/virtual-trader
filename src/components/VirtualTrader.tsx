@@ -6,7 +6,7 @@ import {
   Tooltip, ResponsiveContainer, ReferenceLine,
 } from "recharts";
 
-const INITIAL_CAPITAL = 100000;
+const INITIAL_CAPITAL = 10000;
 const STORAGE_KEY = "vt-state";
 
 const formatCurrency = (val: number) =>
