@@ -82,6 +82,8 @@ export default function VirtualTrader() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [topMovers, setTopMovers] = useState<any[]>([]);
   const [moversLoading, setMoversLoading] = useState(true);
+  const [moversLastUpdated, setMoversLastUpdated] = useState<string | null>(null);
+  const [exitConfirm, setExitConfirm] = useState<{ sym: string; pos: any } | null>(null);
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -165,7 +167,10 @@ export default function VirtualTrader() {
     try {
       const res = await fetch("/api/top-movers");
       const data = await res.json();
-      if (data.movers?.length) setTopMovers(data.movers);
+      if (data.movers?.length) {
+        setTopMovers(data.movers);
+        setMoversLastUpdated(new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }));
+      }
     } catch (_) {}
     setMoversLoading(false);
   };
@@ -293,19 +298,40 @@ export default function VirtualTrader() {
   };
 
   const handleExitFromPortfolio = (sym: string, pos: any) => {
-    const ltp = prices[sym]?.price || pos.avgPrice;
-    setForm({
+    setExitConfirm({ sym, pos });
+  };
+
+  const executeExit = async (sym: string, pos: any) => {
+    setExitConfirm(null);
+    setLoading((l) => ({ ...l, [sym]: true }));
+    const fetched = await fetchPrice(sym);
+    const exitPrice = fetched?.price || prices[sym]?.price || pos.avgPrice;
+    const q = pos.qty;
+    const total = exitPrice * q;
+    const pnl = (exitPrice - pos.avgPrice) * q;
+    setCapital((c) => c + total);
+    setPortfolio((p) => {
+      const { [sym]: _, ...rest } = p;
+      return rest;
+    });
+    setTrades((t) => [{
+      id: Date.now(),
+      date: new Date().toLocaleString("en-IN"),
       symbol: sym,
       name: pos.name,
-      qty: String(pos.qty),
       action: "SELL",
-      stopLoss: "",
-      target: "",
-      strategyTag: "",
-      strategyNote: "",
-    });
-    setSearchResult({ price: ltp, prev: prices[sym]?.prev || ltp });
-    setTab("trade");
+      qty: q,
+      price: exitPrice,
+      total,
+      pnl,
+      stopLoss: null,
+      target: null,
+      strategyTag: "Exit",
+      strategyNote: `Exited full position from portfolio.`,
+    }, ...t]);
+    setPrices((p) => ({ ...p, [sym]: { price: exitPrice, prev: fetched?.prev || exitPrice } }));
+    setLoading((l) => ({ ...l, [sym]: false }));
+    showToast(`Exited ${sym} @ ${formatCurrency(exitPrice)} | P&L: ${formatCurrency(pnl)}`, pnl >= 0 ? "success" : "warn");
   };
 
   const pnlChartData = (() => {
@@ -349,10 +375,12 @@ export default function VirtualTrader() {
           <div style={{ width: 36, height: 36, borderRadius: 8, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>📈</div>
           <div>
             <div style={{ fontWeight: 700, fontSize: 16, letterSpacing: "-0.3px" }}>VirtualTrader</div>
-            <div style={{ fontSize: 11, color: "#64748b", display: "flex", alignItems: "center", gap: 5 }}>
-              NSE/BSE Paper Trading
-              <span style={{ background: "#10b98120", color: "#10b981", borderRadius: 4, padding: "1px 6px", fontSize: 10, fontWeight: 600 }}>💾 Auto-saved</span>
-            </div>
+            {!isMobile && (
+              <div style={{ fontSize: 11, color: "#64748b", display: "flex", alignItems: "center", gap: 5 }}>
+                NSE/BSE Paper Trading
+                <span style={{ background: "#10b98120", color: "#10b981", borderRadius: 4, padding: "1px 6px", fontSize: 10, fontWeight: 600 }}>💾 Auto-saved</span>
+              </div>
+            )}
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -488,7 +516,10 @@ export default function VirtualTrader() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 14, color: "#a78bfa" }}>🔥 Top Movers</div>
-                  <div style={{ fontSize: 11, color: "#475569" }}>Biggest % moves today · Nifty 50</div>
+                  <div style={{ fontSize: 11, color: "#475569" }}>
+                    Biggest % moves · Nifty 50
+                    {moversLastUpdated && <span style={{ marginLeft: 6, color: "#334155" }}>· {moversLastUpdated}</span>}
+                  </div>
                 </div>
                 <button onClick={fetchTopMovers} disabled={moversLoading} style={{ background: "#6366f120", color: "#6366f1", border: "1px solid #6366f140", borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontSize: 11, fontWeight: 600, opacity: moversLoading ? 0.6 : 1 }}>
                   {moversLoading ? "..." : "↻ Refresh"}
@@ -509,7 +540,10 @@ export default function VirtualTrader() {
                     </div>
                   ))
                 ) : topMovers.length === 0 ? (
-                  <div style={{ padding: "24px 0", textAlign: "center", color: "#475569", fontSize: 12 }}>Could not load movers. Market may be closed.</div>
+                  <div style={{ padding: "24px 0", textAlign: "center", color: "#475569", fontSize: 12 }}>
+                    <div style={{ marginBottom: 8 }}>Could not load movers.</div>
+                    <button onClick={fetchTopMovers} style={{ background: "#6366f120", color: "#6366f1", border: "1px solid #6366f140", borderRadius: 6, padding: "5px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>Try again</button>
+                  </div>
                 ) : (
                   topMovers.map((s) => {
                     const isGainer = s.pct > 0;
@@ -742,6 +776,26 @@ export default function VirtualTrader() {
           </div>
         )}
       </div>
+
+      {/* Exit Confirm Modal */}
+      {exitConfirm && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+          <div style={{ background: "#1a1d2e", border: "1px solid #2d3148", borderRadius: 16, padding: 28, maxWidth: 360, width: "90%", textAlign: "center" }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>🚪</div>
+            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 8 }}>Exit Position?</div>
+            <div style={{ color: "#64748b", fontSize: 13, marginBottom: 6, lineHeight: 1.6 }}>
+              Sell all <strong style={{ color: "#e2e8f0" }}>{exitConfirm.pos.qty} shares</strong> of <strong style={{ color: "#e2e8f0" }}>{exitConfirm.sym.replace(".NS", "")}</strong>
+            </div>
+            <div style={{ color: "#64748b", fontSize: 12, marginBottom: 24 }}>
+              Current price will be fetched live. P&L will be recorded in History.
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setExitConfirm(null)} style={{ flex: 1, padding: "10px", borderRadius: 8, border: "1px solid #2d3148", background: "transparent", color: "#94a3b8", cursor: "pointer", fontWeight: 600 }}>Cancel</button>
+              <button onClick={() => executeExit(exitConfirm.sym, exitConfirm.pos)} style={{ flex: 1, padding: "10px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#ef4444,#dc2626)", color: "#fff", cursor: "pointer", fontWeight: 700 }}>Exit Now</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Reset Modal */}
       {showResetConfirm && (
