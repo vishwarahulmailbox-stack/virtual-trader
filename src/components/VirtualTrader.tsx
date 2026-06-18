@@ -86,6 +86,7 @@ export default function VirtualTrader() {
   const [exitConfirm, setExitConfirm] = useState<{ sym: string; pos: any } | null>(null);
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoExiting = useRef<Set<string>>(new Set());
 
   // Detect mobile viewport
   useEffect(() => {
@@ -214,12 +215,59 @@ export default function VirtualTrader() {
     Object.entries(portfolio).forEach(([sym, pos]: any) => {
       const cur = prices[sym]?.price;
       if (!cur) return;
-      if (pos.stopLoss && cur <= pos.stopLoss)
-        showToast(`⚠️ Stop Loss triggered for ${sym} at ${formatCurrency(cur)}`, "warn");
-      if (pos.target && cur >= pos.target)
-        showToast(`🎯 Target hit for ${sym} at ${formatCurrency(cur)}`, "success");
+      if (autoExiting.current.has(sym)) return; // already exiting, avoid duplicate triggers
+
+      const hitStopLoss = pos.stopLoss && cur <= pos.stopLoss;
+      const hitTarget = pos.target && cur >= pos.target;
+
+      if (hitStopLoss || hitTarget) {
+        autoExiting.current.add(sym);
+        const reason = hitStopLoss ? "Stop Loss" : "Target";
+        showToast(
+          hitStopLoss
+            ? `⚠️ Stop Loss hit for ${sym} — auto-exiting @ ${formatCurrency(cur)}`
+            : `🎯 Target hit for ${sym} — auto-exiting @ ${formatCurrency(cur)}`,
+          hitStopLoss ? "warn" : "success"
+        );
+        autoExitPosition(sym, pos, reason);
+      }
     });
   }, [prices]);
+
+  // Auto-exits a position at the live fetched price when SL/Target is breached
+  const autoExitPosition = async (sym: string, pos: any, reason: string) => {
+    setLoading((l) => ({ ...l, [sym]: true }));
+    const fetched = await fetchPrice(sym);
+    const exitPrice = fetched?.price ?? prices[sym]?.price ?? pos.avgPrice;
+    const q = pos.qty;
+    const total = exitPrice * q;
+    const pnl = (exitPrice - pos.avgPrice) * q;
+
+    setCapital((c) => c + total);
+    setPortfolio((p) => {
+      const { [sym]: _, ...rest } = p;
+      return rest;
+    });
+    setTrades((t) => [{
+      id: Date.now(),
+      date: new Date().toLocaleString("en-IN"),
+      symbol: sym,
+      name: pos.name,
+      action: "SELL",
+      qty: q,
+      price: exitPrice,
+      total,
+      pnl,
+      stopLoss: null,
+      target: null,
+      strategyTag: "Auto-Exit",
+      strategyNote: `Auto-exited — ${reason} hit at ${formatCurrency(exitPrice)} (SL: ${pos.stopLoss ? formatCurrency(pos.stopLoss) : "—"}, TGT: ${pos.target ? formatCurrency(pos.target) : "—"}).`,
+    }, ...t]);
+    setPrices((p) => ({ ...p, [sym]: { price: exitPrice, prev: fetched?.prev ?? exitPrice } }));
+    setLoading((l) => ({ ...l, [sym]: false }));
+    showToast(`✅ Auto-exited ${sym} @ ${formatCurrency(exitPrice)} | P&L: ${formatCurrency(pnl)}`, pnl >= 0 ? "success" : "warn");
+    autoExiting.current.delete(sym);
+  };
 
   const handleSearch = async () => {
     if (!form.symbol) return;
