@@ -233,7 +233,7 @@ export default function VirtualTrader() {
       }
     });
   }, [prices]);
-
+ // Hello buddy
   // Auto-exits a position at the live fetched price when SL/Target is breached
   const autoExitPosition = async (sym: string, pos: any, reason: string) => {
     setLoading((l) => ({ ...l, [sym]: true }));
