@@ -579,7 +579,7 @@ export default function VirtualTrader() {
             <div style={{ background: "#1a1d2e", border: "1px solid #2d3148", borderRadius: 12, padding: 20, display: "flex", flexDirection: "column" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: 14, color: "#a78bfa" }}>🔥 Top Movers</div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: "#a78bfa" }}>🔥 Today's Movers</div>
                   <div style={{ fontSize: 11, color: "#475569" }}>
                     Biggest % moves · Nifty 50
                     {moversLastUpdated && <span style={{ marginLeft: 6, color: "#334155" }}>· {moversLastUpdated}</span>}
