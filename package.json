@@ -1,6 +1,6 @@
 {
   "name": "virtual-trader",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -8,6 +8,8 @@
     "start": "next start"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.5.2",
+    "@supabase/supabase-js": "^2.49.4",
     "next": "14.2.5",
     "react": "^18",
     "react-dom": "^18",
