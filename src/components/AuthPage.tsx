@@ -6,7 +6,6 @@ import { createClient } from "@/lib/supabase-client";
 type Mode = "login" | "signup" | "forgot";
 
 export default function AuthPage() {
-  const supabase = createClient();
   const [mode, setMode] = useState<Mode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -30,6 +29,9 @@ export default function AuthPage() {
 
     setLoading(true);
     setMessage(null);
+
+    // createClient() called here — inside event handler, never at module level
+    const supabase = createClient();
 
     if (mode === "forgot") {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
@@ -60,7 +62,6 @@ export default function AuthPage() {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
     if (error) return setMessage({ text: error.message, type: "error" });
-    // VirtualTrader's useEffect will detect the session and switch views
   };
 
   return (
