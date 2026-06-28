@@ -7,10 +7,13 @@ import AuthPage from "@/components/AuthPage";
 import VirtualTrader from "@/components/VirtualTrader";
 
 export default function Home() {
-  const supabase = createClient();
   const [user, setUser] = useState<User | null | undefined>(undefined); // undefined = loading
 
   useEffect(() => {
+    // createClient() is called here (inside useEffect) so it only runs
+    // in the browser, never during Next.js static pre-rendering at build time.
+    const supabase = createClient();
+
     // Get initial session
     supabase.auth.getSession().then(({ data }) => {
       setUser(data.session?.user ?? null);
@@ -25,6 +28,7 @@ export default function Home() {
   }, []);
 
   const handleSignOut = async () => {
+    const supabase = createClient();
     await supabase.auth.signOut();
     setUser(null);
   };
