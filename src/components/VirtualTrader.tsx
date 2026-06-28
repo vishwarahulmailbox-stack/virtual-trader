@@ -5,32 +5,33 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine,
 } from "recharts";
+import { createClient } from "@/lib/supabase-client";
+import type { User } from "@supabase/supabase-js";
 
 const INITIAL_CAPITAL = 10000;
-const STORAGE_KEY = "vt-state";
 
 const formatCurrency = (val: number) =>
   new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(val);
 
 const formatPct = (val: number) => (val >= 0 ? "+" : "") + val.toFixed(2) + "%";
 
-// ── localStorage helpers ──
-function loadState() {
+// ── Cloud save/load via our Next.js API route (which reads the Supabase session server-side) ──
+async function cloudLoad(): Promise<{ capital: number; portfolio: Record<string, any>; trades: any[] } | null> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (_) {}
-  return null;
+    const res = await fetch("/api/trader");
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
 }
 
-function saveState(capital: number, portfolio: Record<string, any>, trades: any[]) {
+async function cloudSave(capital: number, portfolio: Record<string, any>, trades: any[]) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ capital, portfolio, trades }));
+    await fetch("/api/trader", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ capital, portfolio, trades }),
+    });
   } catch (_) {}
-}
-
-function clearState() {
-  try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
 }
 
 // ── Price fetch via our own Next.js API route (server-side, no CORS) ──
@@ -60,7 +61,12 @@ const PnLTooltip = ({ active, payload, label }: any) => {
   );
 };
 
-export default function VirtualTrader() {
+interface Props {
+  user: User;
+  onSignOut: () => void;
+}
+
+export default function VirtualTrader({ user, onSignOut }: Props) {
   const [tab, setTab] = useState("trade");
   const [capital, setCapital] = useState(INITIAL_CAPITAL);
   const [portfolio, setPortfolio] = useState<Record<string, any>>({});
@@ -84,6 +90,7 @@ export default function VirtualTrader() {
   const [moversLoading, setMoversLoading] = useState(true);
   const [moversLastUpdated, setMoversLastUpdated] = useState<string | null>(null);
   const [exitConfirm, setExitConfirm] = useState<{ sym: string; pos: any } | null>(null);
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "error">("saved");
   const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoExiting = useRef<Set<string>>(new Set());
@@ -96,15 +103,16 @@ export default function VirtualTrader() {
     return () => window.removeEventListener("resize", check);
   }, []);
 
-  // Load from localStorage on mount
+  // Load from Supabase on mount
   useEffect(() => {
-    const saved = loadState();
-    if (saved) {
-      setCapital(saved.capital ?? INITIAL_CAPITAL);
-      setPortfolio(saved.portfolio ?? {});
-      setTrades(saved.trades ?? []);
-    }
-    setHydrated(true);
+    cloudLoad().then((saved) => {
+      if (saved) {
+        setCapital(saved.capital ?? INITIAL_CAPITAL);
+        setPortfolio(saved.portfolio ?? {});
+        setTrades(saved.trades ?? []);
+      }
+      setHydrated(true);
+    });
   }, []);
 
   // Fetch top movers on mount + every 5 min
@@ -115,11 +123,19 @@ export default function VirtualTrader() {
     return () => clearInterval(id);
   }, [hydrated]);
 
-  // Debounced save
+  // Debounced cloud save
   useEffect(() => {
     if (!hydrated) return;
+    setSaveStatus("saving");
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => saveState(capital, portfolio, trades), 600);
+    saveTimer.current = setTimeout(async () => {
+      try {
+        await cloudSave(capital, portfolio, trades);
+        setSaveStatus("saved");
+      } catch {
+        setSaveStatus("error");
+      }
+    }, 800);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [capital, portfolio, trades, hydrated]);
 
@@ -176,8 +192,7 @@ export default function VirtualTrader() {
     setMoversLoading(false);
   };
 
-  const handleReset = () => {
-    clearState();
+  const handleReset = async () => {
     setCapital(INITIAL_CAPITAL);
     setPortfolio({});
     setTrades([]);
@@ -215,11 +230,9 @@ export default function VirtualTrader() {
     Object.entries(portfolio).forEach(([sym, pos]: any) => {
       const cur = prices[sym]?.price;
       if (!cur) return;
-      if (autoExiting.current.has(sym)) return; // already exiting, avoid duplicate triggers
-
+      if (autoExiting.current.has(sym)) return;
       const hitStopLoss = pos.stopLoss && cur <= pos.stopLoss;
       const hitTarget = pos.target && cur >= pos.target;
-
       if (hitStopLoss || hitTarget) {
         autoExiting.current.add(sym);
         const reason = hitStopLoss ? "Stop Loss" : "Target";
@@ -233,8 +246,7 @@ export default function VirtualTrader() {
       }
     });
   }, [prices]);
- // Hello buddy
-  // Auto-exits a position at the live fetched price when SL/Target is breached
+
   const autoExitPosition = async (sym: string, pos: any, reason: string) => {
     setLoading((l) => ({ ...l, [sym]: true }));
     const fetched = await fetchPrice(sym);
@@ -244,23 +256,12 @@ export default function VirtualTrader() {
     const pnl = (exitPrice - pos.avgPrice) * q;
 
     setCapital((c) => c + total);
-    setPortfolio((p) => {
-      const { [sym]: _, ...rest } = p;
-      return rest;
-    });
+    setPortfolio((p) => { const { [sym]: _, ...rest } = p; return rest; });
     setTrades((t) => [{
-      id: Date.now(),
-      date: new Date().toLocaleString("en-IN"),
-      symbol: sym,
-      name: pos.name,
-      action: "SELL",
-      qty: q,
-      price: exitPrice,
-      total,
-      pnl,
-      stopLoss: null,
-      target: null,
-      strategyTag: "Auto-Exit",
+      id: Date.now(), date: new Date().toLocaleString("en-IN"),
+      symbol: sym, name: pos.name, action: "SELL",
+      qty: q, price: exitPrice, total, pnl,
+      stopLoss: null, target: null, strategyTag: "Auto-Exit",
       strategyNote: `Auto-exited — ${reason} hit at ${formatCurrency(exitPrice)} (SL: ${pos.stopLoss ? formatCurrency(pos.stopLoss) : "—"}, TGT: ${pos.target ? formatCurrency(pos.target) : "—"}).`,
     }, ...t]);
     setPrices((p) => ({ ...p, [sym]: { price: exitPrice, prev: fetched?.prev ?? exitPrice } }));
@@ -279,12 +280,7 @@ export default function VirtualTrader() {
     const r = await fetchPrice(sym);
     if (r) {
       setSearchResult(r);
-      setForm((f) => ({
-        ...f,
-        symbol: sym,
-        stopLoss: (r.price * 0.98).toFixed(2),
-        target: (r.price * 1.05).toFixed(2),
-      }));
+      setForm((f) => ({ ...f, symbol: sym, stopLoss: (r.price * 0.98).toFixed(2), target: (r.price * 1.05).toFixed(2) }));
     } else showToast("Could not fetch price. Check symbol.", "error");
     setSearchLoading(false);
   };
@@ -296,11 +292,7 @@ export default function VirtualTrader() {
     const r = await fetchPrice(stock.symbol);
     if (r) {
       setSearchResult(r);
-      setForm((f) => ({
-        ...f,
-        stopLoss: (r.price * 0.98).toFixed(2),
-        target: (r.price * 1.05).toFixed(2),
-      }));
+      setForm((f) => ({ ...f, stopLoss: (r.price * 0.98).toFixed(2), target: (r.price * 1.05).toFixed(2) }));
     }
     setSearchLoading(false);
   };
@@ -345,9 +337,7 @@ export default function VirtualTrader() {
     setSearchResult(null);
   };
 
-  const handleExitFromPortfolio = (sym: string, pos: any) => {
-    setExitConfirm({ sym, pos });
-  };
+  const handleExitFromPortfolio = (sym: string, pos: any) => setExitConfirm({ sym, pos });
 
   const executeExit = async (sym: string, pos: any) => {
     setExitConfirm(null);
@@ -358,23 +348,12 @@ export default function VirtualTrader() {
     const total = exitPrice * q;
     const pnl = (exitPrice - pos.avgPrice) * q;
     setCapital((c) => c + total);
-    setPortfolio((p) => {
-      const { [sym]: _, ...rest } = p;
-      return rest;
-    });
+    setPortfolio((p) => { const { [sym]: _, ...rest } = p; return rest; });
     setTrades((t) => [{
-      id: Date.now(),
-      date: new Date().toLocaleString("en-IN"),
-      symbol: sym,
-      name: pos.name,
-      action: "SELL",
-      qty: q,
-      price: exitPrice,
-      total,
-      pnl,
-      stopLoss: null,
-      target: null,
-      strategyTag: "Exit",
+      id: Date.now(), date: new Date().toLocaleString("en-IN"),
+      symbol: sym, name: pos.name, action: "SELL",
+      qty: q, price: exitPrice, total, pnl,
+      stopLoss: null, target: null, strategyTag: "Exit",
       strategyNote: `Exited full position from portfolio.`,
     }, ...t]);
     setPrices((p) => ({ ...p, [sym]: { price: exitPrice, prev: fetched?.prev || exitPrice } }));
@@ -428,7 +407,14 @@ export default function VirtualTrader() {
             {!isMobile && (
               <div style={{ fontSize: 11, color: "#64748b", display: "flex", alignItems: "center", gap: 5 }}>
                 NSE/BSE Paper Trading
-                <span style={{ background: "#10b98120", color: "#10b981", borderRadius: 4, padding: "1px 6px", fontSize: 10, fontWeight: 600 }}>💾 Auto-saved</span>
+                <span style={{
+                  background: saveStatus === "saved" ? "#10b98120" : saveStatus === "saving" ? "#f59e0b20" : "#ef444420",
+                  color: saveStatus === "saved" ? "#10b981" : saveStatus === "saving" ? "#f59e0b" : "#ef4444",
+                  borderRadius: 4, padding: "1px 6px", fontSize: 10, fontWeight: 600,
+                }}>
+                  {saveStatus === "saved" ? "☁️ Synced" : saveStatus === "saving" ? "⏳ Saving…" : "⚠️ Sync error"}
+                </span>
+                <span style={{ color: "#334155", fontSize: 10 }}>· {user.email}</span>
               </div>
             )}
           </div>
@@ -440,6 +426,9 @@ export default function VirtualTrader() {
           </div>
           <div style={{ background: totalReturn >= 0 ? "#10b98120" : "#ef444420", color: totalReturn >= 0 ? "#10b981" : "#ef4444", borderRadius: 6, padding: "4px 10px", fontSize: 13, fontWeight: 600 }}>{formatPct(totalReturn)}</div>
           <button onClick={() => setShowResetConfirm(true)} style={{ background: "#ef444415", color: "#ef4444", border: "1px solid #ef444430", borderRadius: 6, padding: "6px 10px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>↺ Reset</button>
+          <button onClick={onSignOut} title="Sign out" style={{ background: "#2d314850", color: "#94a3b8", border: "1px solid #2d3148", borderRadius: 6, padding: "6px 10px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+            {isMobile ? "⎋" : "Sign Out"}
+          </button>
         </div>
       </div>
 
@@ -494,22 +483,14 @@ export default function VirtualTrader() {
                     {showSuggestions && (
                       <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#1a1d2e", border: "1px solid #6366f1", borderRadius: 8, zIndex: 100, overflow: "hidden", marginTop: 4, boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
                         {suggestions.map((s) => (
-                          <div
-                            key={s.symbol}
-                            onMouseDown={() => selectSuggestion(s)}
+                          <div key={s.symbol} onMouseDown={() => selectSuggestion(s)}
                             style={{ padding: "9px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #2d3148" }}
                             onMouseEnter={(e) => (e.currentTarget.style.background = "#6366f115")}
-                            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                          >
+                            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
                             <div>
                               <span style={{ fontWeight: 700, fontSize: 13, color: "#e2e8f0" }}>{s.symbol.replace(".NS", "")}</span>
                               <span style={{ fontSize: 11, color: "#64748b", marginLeft: 8 }}>{s.name}</span>
                             </div>
-                            {prices[s.symbol] && (
-                              <span style={{ fontSize: 12, fontWeight: 600, color: prices[s.symbol].price >= prices[s.symbol].prev ? "#10b981" : "#ef4444" }}>
-                                {new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(prices[s.symbol].price)}
-                              </span>
-                            )}
                           </div>
                         ))}
                       </div>
@@ -522,17 +503,16 @@ export default function VirtualTrader() {
                   </button>
                 </div>
               </div>
-              {/* Stock name display box — shown as soon as a stock is selected/searched */}
               {(form.name || (form.symbol && searchResult)) && (
                 <div style={{ background: "#0f1117", border: "1px solid #6366f140", borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ width: 32, height: 32, borderRadius: 6, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
-                    {(form.name || form.symbol.replace(".NS","")).charAt(0)}
+                    {(form.name || form.symbol.replace(".NS", "")).charAt(0)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 700, fontSize: 14, color: "#e2e8f0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {form.name || form.symbol.replace(".NS", "")}
                     </div>
-                    <div style={{ fontSize: 11, color: "#64748b" }}>{form.symbol.replace(".NS","").replace(".BO","")} · NSE</div>
+                    <div style={{ fontSize: 11, color: "#64748b" }}>{form.symbol.replace(".NS", "").replace(".BO", "")} · NSE</div>
                   </div>
                 </div>
               )}
@@ -575,7 +555,7 @@ export default function VirtualTrader() {
               </button>
             </div>
 
-            {/* Top Movers — dynamic from Yahoo Finance */}
+            {/* Top Movers */}
             <div style={{ background: "#1a1d2e", border: "1px solid #2d3148", borderRadius: 12, padding: 20, display: "flex", flexDirection: "column" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                 <div>
@@ -649,7 +629,6 @@ export default function VirtualTrader() {
             {Object.keys(portfolio).length === 0 ? (
               <div style={{ padding: 40, textAlign: "center", color: "#475569" }}>No holdings yet.</div>
             ) : isMobile ? (
-              // Mobile card view
               <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
                 {Object.entries(portfolio).map(([sym, pos]: any, i) => {
                   const ltp = prices[sym]?.price || pos.avgPrice;
@@ -683,9 +662,7 @@ export default function VirtualTrader() {
                           </div>
                         ))}
                       </div>
-                      <button
-                        onClick={() => handleExitFromPortfolio(sym, pos)}
-                        style={{ marginTop: 10, width: "100%", padding: "9px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#ef4444,#dc2626)", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                      <button onClick={() => handleExitFromPortfolio(sym, pos)} style={{ marginTop: 10, width: "100%", padding: "9px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#ef4444,#dc2626)", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
                         Exit Position
                       </button>
                     </div>
@@ -693,7 +670,6 @@ export default function VirtualTrader() {
                 })}
               </div>
             ) : (
-              // Desktop table view
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: "#0f1117" }}>
@@ -723,9 +699,7 @@ export default function VirtualTrader() {
                         <td style={{ padding: "12px 16px", fontSize: 12, color: "#ef4444" }}>{pos.stopLoss ? formatCurrency(pos.stopLoss) : "—"}</td>
                         <td style={{ padding: "12px 16px", fontSize: 12, color: "#10b981" }}>{pos.target ? formatCurrency(pos.target) : "—"}</td>
                         <td style={{ padding: "12px 16px" }}>
-                          <button
-                            onClick={() => handleExitFromPortfolio(sym, pos)}
-                            style={{ background: "#ef444415", color: "#ef4444", border: "1px solid #ef444430", borderRadius: 6, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+                          <button onClick={() => handleExitFromPortfolio(sym, pos)} style={{ background: "#ef444415", color: "#ef4444", border: "1px solid #ef444430", borderRadius: 6, padding: "5px 12px", cursor: "pointer", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
                             Exit
                           </button>
                         </td>
@@ -787,7 +761,7 @@ export default function VirtualTrader() {
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                             <div>
                               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <span style={{ fontWeight: 700, fontSize: 14, color: "#e2e8f0" }}>{t.symbol.replace(".NS", "").replace(".BO","")}</span>
+                                <span style={{ fontWeight: 700, fontSize: 14, color: "#e2e8f0" }}>{t.symbol.replace(".NS", "").replace(".BO", "")}</span>
                                 <span style={{ background: t.action === "BUY" ? "#10b98120" : "#ef444420", color: t.action === "BUY" ? "#10b981" : "#ef4444", borderRadius: 4, padding: "2px 7px", fontSize: 11, fontWeight: 700 }}>{t.action}</span>
                               </div>
                               <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{t.date}</div>
